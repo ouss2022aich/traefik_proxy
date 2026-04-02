@@ -1,135 +1,58 @@
 services:
-  app-staging:
-    container_name: misdakia-app-staging
-    image: ${STAGING_IMAGE:-docker.io/${DOCKERHUB_USERNAME:-oussama}/misdakia:staging}
-    build:
-      context: ..
-      dockerfile: docker/php/Dockerfile
-      target: staging-runtime
-      args:
-        UID: ${UID:-1000}
-        GID: ${GID:-1000}
-    working_dir: /var/www/html
-    env_file:
-      - ../.env.staging
-    environment:
-      APP_ENV: staging
-      APP_DEBUG: ${STAGING_APP_DEBUG:-false}
-      APP_URL: ${STAGING_APP_URL:-http://localhost:8080}
-      DB_HOST: postgres-staging
-      REDIS_HOST: redis-staging
-      MAIL_MAILER: smtp
-      MAIL_HOST: ${STAGING_MAIL_HOST:-smtp.example.com}
-      MAIL_PORT: ${STAGING_MAIL_PORT:-587}
-      MAIL_USERNAME: ${STAGING_MAIL_USERNAME:-null}
-      MAIL_PASSWORD: ${STAGING_MAIL_PASSWORD:-null}
-      MAIL_ENCRYPTION: ${STAGING_MAIL_ENCRYPTION:-tls}
-    command: ["/usr/local/bin/start-app-staging"]
-    expose:
-      - "8000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+  traefik:
+    container_name: global-traefik
+    image: traefik:v3.0
     restart: unless-stopped
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs-production:/letsencrypt
+
+    command:
+      - --api.dashboard=true
+      - --api.insecure=false
+      - --providers.docker=true
+      - --providers.docker.endpoint=unix:///var/run/docker.sock
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=shared-proxy
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=600s
+      - --entrypoints.websecure.transport.respondingTimeouts.writeTimeout=600s
+      - --entrypoints.websecure.transport.respondingTimeouts.idleTimeout=180s
+      - --entrypoints.web.transport.respondingTimeouts.readTimeout=600s
+      - --entrypoints.web.transport.respondingTimeouts.writeTimeout=600s
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --log.level=INFO
+      - --accesslog=true
+
     networks:
-      - misdakia-staging-network
       - shared-proxy
-    depends_on:
-      postgres-staging:
-        condition: service_healthy
-      redis-staging:
-        condition: service_healthy
+
     labels:
       - traefik.enable=true
-      - traefik.docker.network=shared-proxy
-      - traefik.http.routers.misdakia-staging.rule=Host(`${TRAEFIK_APP_HOST:-misdakia.t4startups.com}`)
-      - traefik.http.routers.misdakia-staging.entrypoints=websecure
-      - traefik.http.routers.misdakia-staging.tls.certresolver=letsencrypt
-      - traefik.http.routers.misdakia-staging.middlewares=misdakia-staging-headers
-      - traefik.http.services.misdakia-staging.loadbalancer.server.port=8000
-      - traefik.http.middlewares.misdakia-staging-headers.headers.customrequestheaders.X-Forwarded-Proto=https
-
-  queue-staging:
-    container_name: misdakia-queue-staging
-    image: ${STAGING_IMAGE:-docker.io/${DOCKERHUB_USERNAME:-oussama}/misdakia:staging}
-    build:
-      context: ..
-      dockerfile: docker/php/Dockerfile
-      target: staging-runtime
-      args:
-        UID: ${UID:-1000}
-        GID: ${GID:-1000}
-    working_dir: /var/www/html
-    env_file:
-      - ../.env.staging
-    environment:
-      APP_ENV: staging
-      APP_DEBUG: ${STAGING_APP_DEBUG:-false}
-      DB_HOST: postgres-staging
-      REDIS_HOST: redis-staging
-      MAIL_MAILER: smtp
-      MAIL_HOST: ${STAGING_MAIL_HOST:-smtp.example.com}
-      MAIL_PORT: ${STAGING_MAIL_PORT:-587}
-      MAIL_USERNAME: ${STAGING_MAIL_USERNAME:-null}
-      MAIL_PASSWORD: ${STAGING_MAIL_PASSWORD:-null}
-      MAIL_ENCRYPTION: ${STAGING_MAIL_ENCRYPTION:-tls}
-    command: ["/usr/local/bin/start-queue-staging"]
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    restart: unless-stopped
-    networks:
-      - misdakia-staging-network
-    depends_on:
-      postgres-staging:
-        condition: service_healthy
-      redis-staging:
-        condition: service_healthy
-
-  postgres-staging:
-    container_name: misdakia-postgres-staging
-    image: postgres:17-alpine
-    env_file:
-      - ../.env.staging
-    environment:
-      POSTGRES_DB: ${DB_DATABASE}
-      POSTGRES_USER: ${DB_USERNAME}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-    ports:
-      - "${STAGING_FORWARD_DB_PORT:-5433}:5432"
-    volumes:
-      - postgres-staging-data:/var/lib/postgresql/data
-    restart: unless-stopped
-    networks:
-      - misdakia-staging-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  redis-staging:
-    container_name: misdakia-redis-staging
-    image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "${STAGING_FORWARD_REDIS_PORT:-6380}:6379"
-    volumes:
-      - redis-staging-data:/data
-    restart: unless-stopped
-    networks:
-      - misdakia-staging-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      - traefik.http.routers.traefik-dashboard.rule=Host(`${TRAEFIK_DASHBOARD_HOST}`)
+      - traefik.http.routers.traefik-dashboard.entrypoints=websecure
+      - traefik.http.routers.traefik-dashboard.tls.certresolver=letsencrypt
+      - traefik.http.routers.traefik-dashboard.service=api@internal
+      - traefik.http.routers.traefik-dashboard.middlewares=traefik-auth
+      - traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_DASHBOARD_USERS}
 
 volumes:
-  postgres-staging-data:
-  redis-staging-data:
+  traefik-certs-production:
+    external: true
+    name: docker_traefik-certs-production
 
 networks:
-  misdakia-staging-network:
-    name: misdakia-staging-network
   shared-proxy:
     external: true
     name: shared-proxy
