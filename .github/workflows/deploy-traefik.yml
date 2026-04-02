@@ -1,0 +1,58 @@
+name: Deploy Traefik
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: traefik-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Sync repository
+        run: |
+          rsync -az --delete \
+            --exclude ".git" \
+            --exclude ".github" \
+            ./ \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/"
+
+      - name: Deploy Traefik
+        run: |
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" '
+            set -eu
+
+            cd "${{ secrets.DEPLOY_PATH }}"
+
+            docker network inspect shared-proxy >/dev/null 2>&1 || docker network create shared-proxy
+
+            mkdir -p data
+            [ -f data/acme.json ] || touch data/acme.json
+            chmod 600 data/acme.json
+
+            docker compose config >/dev/null
+            docker compose pull
+            docker compose up -d
+
+            docker ps --filter "name=traefik"
+          '
