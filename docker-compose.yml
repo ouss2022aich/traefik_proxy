@@ -1,12 +1,16 @@
 services:
   traefik:
-    image: traefik:v3.6
     container_name: global-traefik
+    image: traefik:v3.0
     restart: unless-stopped
 
     ports:
       - "80:80"
       - "443:443"
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs-production:/letsencrypt
 
     command:
       - --api.dashboard=true
@@ -20,6 +24,12 @@ services:
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
 
+      - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=600s
+      - --entrypoints.websecure.transport.respondingTimeouts.writeTimeout=600s
+      - --entrypoints.websecure.transport.respondingTimeouts.idleTimeout=180s
+      - --entrypoints.web.transport.respondingTimeouts.readTimeout=600s
+      - --entrypoints.web.transport.respondingTimeouts.writeTimeout=600s
+
       - --entrypoints.web.http.redirections.entrypoint.to=websecure
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
 
@@ -31,23 +41,22 @@ services:
       - --log.level=INFO
       - --accesslog=true
 
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./data/acme.json:/letsencrypt/acme.json
-
     networks:
       - shared-proxy
 
     labels:
       - traefik.enable=true
-
       - traefik.http.routers.traefik-dashboard.rule=Host(`${TRAEFIK_DASHBOARD_HOST}`)
       - traefik.http.routers.traefik-dashboard.entrypoints=websecure
       - traefik.http.routers.traefik-dashboard.tls.certresolver=letsencrypt
       - traefik.http.routers.traefik-dashboard.service=api@internal
       - traefik.http.routers.traefik-dashboard.middlewares=traefik-auth
-
       - traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_DASHBOARD_USERS}
+
+volumes:
+  traefik-certs-production:
+    external: true
+    name: docker_traefik-certs-production
 
 networks:
   shared-proxy:
