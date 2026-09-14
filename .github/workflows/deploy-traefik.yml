@@ -25,6 +25,11 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
+      - name: Check loaded SSH key
+        run: |
+          echo "Loaded SSH keys:"
+          ssh-add -l
+
       - name: Test SSH connectivity
         run: |
           echo "Testing SSH port 22..."
@@ -34,24 +39,26 @@ jobs:
         run: |
           mkdir -p ~/.ssh
 
-          echo "Scanning SSH host key..."
-          ssh-keyscan -T 10 -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan \
+            -T 10 \
+            -H "${{ secrets.SSH_HOST }}" \
+            >> ~/.ssh/known_hosts
 
           chmod 600 ~/.ssh/known_hosts
-
-          echo "SSH host key added successfully"
 
       - name: Test SSH authentication
         run: |
           ssh \
             -o BatchMode=yes \
             -o ConnectTimeout=10 \
+            -o IdentitiesOnly=yes \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             "echo 'SSH connection successful'"
 
       - name: Sync repository
         run: |
           rsync -az --delete \
+            -e "ssh -o IdentitiesOnly=yes" \
             --exclude ".git" \
             --exclude ".github" \
             ./ \
@@ -59,23 +66,29 @@ jobs:
 
       - name: Deploy Traefik
         run: |
-          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" '
-            set -eu
+          ssh \
+            -o IdentitiesOnly=yes \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" '
+              set -eu
 
-            cd "${{ secrets.DEPLOY_PATH }}"
+              cd "${{ secrets.DEPLOY_PATH }}"
 
-            docker network inspect shared-proxy >/dev/null 2>&1 || docker network create shared-proxy
+              docker network inspect shared-proxy >/dev/null 2>&1 \
+                || docker network create shared-proxy
 
-            mkdir -p data
-            [ -f data/acme.json ] || touch data/acme.json
-            chmod 600 data/acme.json
+              mkdir -p data
 
-            docker compose config >/dev/null
+              [ -f data/acme.json ] \
+                || touch data/acme.json
 
-            docker compose pull
+              chmod 600 data/acme.json
 
-            docker compose up -d
+              docker compose config >/dev/null
 
-            echo "Traefik containers:"
-            docker ps --filter "name=traefik"
-          '
+              docker compose pull
+
+              docker compose up -d
+
+              echo "Traefik containers:"
+              docker ps --filter "name=traefik"
+            '
